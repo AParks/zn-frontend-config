@@ -18,6 +18,7 @@ plugin.service('wgnConfigSettings', ['$q', 'wgnConfigInputs', function ($q, conf
 		var _fieldTypes = {};
 		var _highlightedFields = [];
 		var _hooks = {};
+		var _webhook = false;
 
 		var _settings = angular.extend({}, _defaults);
 
@@ -70,7 +71,7 @@ plugin.service('wgnConfigSettings', ['$q', 'wgnConfigInputs', function ($q, conf
 		 * @param {Object} def The field definition.
 		 */
 		srv.field = function (def) {
-			/*jshint maxcomplexity:14 */
+			/*jshint maxcomplexity:22 */
 			// Make sure we have a page, this will only be false if a field is added before a page.
 			if (_currentPage === false) {
 				throw new Error('Config: No page exists to add fields to');
@@ -117,10 +118,15 @@ plugin.service('wgnConfigSettings', ['$q', 'wgnConfigInputs', function ($q, conf
 			// Validate field type specific options.
 			var opts = _fieldTypes[def.type].options;
 
-			// For convenience, if we have defined a form on the current page, set a default "belongsTo" value for
-			// field types that require it (field and folder, but not other form fields)
-			if (!def.type !== 'form' && 'belongsTo' in opts && !('belongsTo' in def) && _currentForm !== false) {
-				def.belongsTo = _formInputs[_currentForm];
+			// Try to auto-fill the belongsTo option if it's required but not set.
+			if ('belongsTo' in opts && !('belongsTo' in def)) {
+				if (def.type !== 'form' && _currentForm !== false) {
+					// For non-form fields, belongsTo will require a forn.
+					def.belongsTo = _formInputs[_currentForm];
+				} else if (def.type === 'form' && _currentWorkspace !== false) {
+					// For form fields, belongsTo is always a workspace.
+					def.belongsTo = _workspaceInputs[_currentWorkspace];
+				}
 			}
 
 			// Iterate over field type option definitions and validate the given field definition.
@@ -243,6 +249,44 @@ plugin.service('wgnConfigSettings', ['$q', 'wgnConfigInputs', function ($q, conf
 			};
 
 			return srv;
+		};
+
+		/**
+		 * Enable Webhook support form configurations.
+		 *
+		 * @param {wgnWebhook} A webhook service instance
+		 * @param {Object} options Options to pass to the webhook service
+		 */
+		srv.webhook = function (webhook, options) {
+			// Validate required options.
+			if (!('url' in options)) {
+				throw new Error('Config: Missing required param "url" in webhook options.');
+			}
+
+			if (!('form.id' in options)) {
+				throw new Error('Config: Missing required param "form.id" in webhook options.');
+			}
+
+			// Finally make sure the form.id acually exists.
+			if (_formInputs.indexOf(options['form.id']) === -1) {
+				throw new Error('Config: Inexistent form id specified in param "form.id" in webhook options.');
+			}
+
+			_webhook = {
+				service: webhook,
+				options: options
+			};
+
+			return srv;
+		};
+
+		/**
+		 * Returns webhook configs if they exist.
+		 *
+		 * @returns {{webhook: wgnWebhook, options: Object} | false}
+		 */
+		srv.getWebhook = function () {
+			return _webhook;
 		};
 
 		/**

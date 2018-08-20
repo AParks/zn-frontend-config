@@ -11,6 +11,7 @@ plugin.controller('wgnConfigCtrl', ['$scope', '$q', '$routeParams', 'znData', 'z
 		var _fieldsLoading = {};
 		var _foldersLoading = {};
 		var _originalConfig;
+		var _webhook = false;
 
 		/**
 		 * Whether the plugin is loading or not, displays a throbber.
@@ -56,11 +57,7 @@ plugin.controller('wgnConfigCtrl', ['$scope', '$q', '$routeParams', 'znData', 'z
 					enabled: false
 				};
 
-				doRunHook('add', $scope.editing.config).then(function (data) {
-					if (data && angular.isObject(data)) {
-						angular.extend($scope.editing.config, data);
-					}
-
+				doRunHook('add', $scope.editing.config).finally(function () {
 					doResetTab();
 					$scope.wgnConfigForm.$setPristine();
 				});
@@ -80,11 +77,7 @@ plugin.controller('wgnConfigCtrl', ['$scope', '$q', '$routeParams', 'znData', 'z
 					return config.$id === id;
 				})[0];
 
-				doRunHook('edit', $scope.editing.config).then(function (data) {
-					if (data && angular.isObject(data)) {
-						angular.extend($scope.editing.config, data);
-					}
-
+				doRunHook('edit', $scope.editing.config).finally(function () {
 					doResetTab();
 					$scope.wgnConfigForm.$setPristine();
 				});
@@ -109,7 +102,9 @@ plugin.controller('wgnConfigCtrl', ['$scope', '$q', '$routeParams', 'znData', 'z
 						action: function () {
 							$scope.saving = true;
 							return configService.deleteConfig(_workspaceId, $scope.editing.config, $scope.configs).then(function () {
-								doRunHook('delete', shallowCopy($scope.editing.config)).finally(function () {
+								return doRunHook('delete', shallowCopy($scope.editing.config)).finally(function () {
+									return _webhook ? _webhook.service.delete($scope.editing.config.webhookId) : $q.when();
+								}).then(function () {
 									doDiscardChanges();
 									znMessage('The configuration has been deleted!', 'info');
 									$scope.saving = false;
@@ -135,8 +130,6 @@ plugin.controller('wgnConfigCtrl', ['$scope', '$q', '$routeParams', 'znData', 'z
 			}
 
 			return doSaveConfig($scope.editing.config).then(function () {
-				znMessage('Configuration saved!', 'saved');
-
 				if ($scope.settings.toggle && !$scope.editing.config.enabled && !('$id' in $scope.editing.config)) {
 					znModal({
 						title: '',
@@ -158,8 +151,10 @@ plugin.controller('wgnConfigCtrl', ['$scope', '$q', '$routeParams', 'znData', 'z
 					$scope.wgnConfigForm.$setPristine();
 				}
 
-				$scope.saving = false;
-				return doRunHook('save', $scope.editing.config);
+				return doRunHook('save', $scope.editing.config).finally(function () {
+					znMessage('Configuration saved!', 'saved');
+					$scope.saving = false;
+				});
 			});
 		};
 
@@ -170,8 +165,10 @@ plugin.controller('wgnConfigCtrl', ['$scope', '$q', '$routeParams', 'znData', 'z
 			$scope.saving = true;
 			$scope.editing.config.enabled = false;
 
-			return doRunHook('disable', $scope.editing.config).then(function () {
-				return doSaveConfig($scope.editing.config);
+			return doRunHook('disable', $scope.editing.config).finally(function () {
+				return doSaveConfig($scope.editing.config).then(function () {
+					return _webhook ? _webhook.service.disable($scope.editing.config.webhookId) : $q.when();
+				});
 			}).catch(function () {
 				$scope.editing.config.enabled = true;
 				znMessage('There was an error disabling the configuration!', 'error');
@@ -189,8 +186,10 @@ plugin.controller('wgnConfigCtrl', ['$scope', '$q', '$routeParams', 'znData', 'z
 			$scope.saving = true;
 			$scope.editing.config.enabled = true;
 
-			doRunHook('enable', $scope.editing.config).then(function () {
-				return doSaveConfig($scope.editing.config);
+			return doRunHook('enable', $scope.editing.config).finally(function () {
+				return doSaveConfig($scope.editing.config).then(function () {
+					return _webhook ? _webhook.service.enable($scope.editing.config.webhookId) : $q.when();
+				});
 			}).catch(function () {
 				$scope.editing.config.enabled = false;
 				znMessage('There was an error enabling the configuration!', 'error');
@@ -357,7 +356,7 @@ plugin.controller('wgnConfigCtrl', ['$scope', '$q', '$routeParams', 'znData', 'z
 			workspaceId = workspaceId || _workspaceId;
 
 			// Sanity when dealing with forms belonging to a workspace.
-			if (!workspaceId in _forms) {
+			if (!(workspaceId in _forms)) {
 				return [];
 			}
 
@@ -474,23 +473,17 @@ plugin.controller('wgnConfigCtrl', ['$scope', '$q', '$routeParams', 'znData', 'z
 		 */
 		$scope.onConfigToggle = function (config) {
 			if (config.enabled) {
-				doRunHook('enable', config).then(function (data) {
-					if (data && angular.isObject(data)) {
-						angular.extend(config, data);
-					}
-
+				doRunHook('enable', config).finally(function () {
 					return doSaveConfig(config).then(function () {
 						znMessage('Configuration ' + config.name + ' enabled!', 'saved');
+						return _webhook ? _webhook.service.enable(config.webhookId) : $q.when();
 					});
 				});
 			} else {
-				doRunHook('disable', config).then(function (data) {
-					if (data && angular.isObject(data)) {
-						angular.extend(config, data);
-					}
-
+				doRunHook('disable', config).finally(function () {
 					return doSaveConfig(config).then(function () {
 						znMessage('Configuration ' + config.name + ' disabled!', 'saved');
+						return _webhook ? _webhook.service.disable(config.webhookId) : $q.when();
 					});
 				});
 			}
@@ -572,7 +565,7 @@ plugin.controller('wgnConfigCtrl', ['$scope', '$q', '$routeParams', 'znData', 'z
 				_workspaces = workspaces.slice();
 			}).catch(function (err) {
 				znMessage(err, 'error');
-			})
+			});
 		}
 
 		/**
@@ -584,13 +577,13 @@ plugin.controller('wgnConfigCtrl', ['$scope', '$q', '$routeParams', 'znData', 'z
 			_formsLoading[workspaceId] = true;
 
 			return znData('Forms').get({ 'workspace.id': workspaceId, 'limit': 200 }).then(function (forms) {
-				_forms[workspaceId] = forms
+				_forms[workspaceId] = forms;
 			}).catch(function (err) {
 				znMessage(err, 'error');
 			}).finally(function () {
 				_formsLoading[workspaceId] = false;
 			});
-		};
+		}
 
 		/**
 		 * Loads field data for the given form.
@@ -683,7 +676,7 @@ plugin.controller('wgnConfigCtrl', ['$scope', '$q', '$routeParams', 'znData', 'z
 
 			// Extract info from each one and save it for display.
 			angular.forEach(highlighted, function (input) {
-				/*jshint maxcomplexity:9 */
+				/*jshint maxcomplexity:11 */
 				var inputTypeFormatted = input.type.charAt(0).toUpperCase() + input.type.substr(1);
 
 				switch (input.type) {
@@ -696,7 +689,7 @@ plugin.controller('wgnConfigCtrl', ['$scope', '$q', '$routeParams', 'znData', 'z
 							formatedHighligts.push({
 								type: inputTypeFormatted,
 								value: workspace.name
-							})
+							});
 						}
 						break;
 					case 'form':
@@ -769,7 +762,45 @@ plugin.controller('wgnConfigCtrl', ['$scope', '$q', '$routeParams', 'znData', 'z
 		 * @return {Promise}
 		 */
 		function doSaveConfig (config) {
-			return configService.save(_workspaceId, $scope.settings.multi, $scope.configs, config);
+			var promise = $q.when(config);
+
+			if (_webhook && !('webhookId' in config)) {
+				var options = Object.assign({}, _webhook.options);
+
+				if (!(options['form.id'] in config)) {
+					throw new Error('Config: Invalid form.id for webhook');
+				}
+
+				options['form.id'] = config[options['form.id']];
+
+				promise = _webhook.service.create(options).then(function (webhook) {
+					config.webhookId = webhook.id;
+					config.webhookKey = webhook.secretKey;
+					return config;
+				}).catch(function (err) {
+					znMessage('There was an error creating the webhook.', 'error');
+					return config;
+				});
+			}
+
+			return promise.then(function (cfg) {
+				return configService.save(_workspaceId, $scope.settings.multi, $scope.configs, cfg).then(function () {
+					return cfg;
+				});
+			}).then(function (cfg) {
+				// Now that we know the config id, update the webhook URL to add it when using multi configs.
+				if ($scope.settings.multi) {
+					return _webhook.service.load(cfg.webhookId).then(function (wh) {
+						if (wh.url.indexOf('config=') === -1) {
+							var separator = wh.url.indexOf('?') === -1 ? '?' : '&';
+							return _webhook.service.update({
+								id: wh.id,
+								url: wh.url + separator + 'config=' + encodeURI(cfg.$id)
+							});
+						}
+					});
+				}
+			});
 		}
 
 		/**
@@ -814,6 +845,7 @@ plugin.controller('wgnConfigCtrl', ['$scope', '$q', '$routeParams', 'znData', 'z
 			}
 
 			$scope.settings = $scope.options.getConfig();
+			_webhook = $scope.options.getWebhook();
 			doResetTab();
 
 			// Load settings.
@@ -833,9 +865,9 @@ plugin.controller('wgnConfigCtrl', ['$scope', '$q', '$routeParams', 'znData', 'z
 
 				return def.promise;
 			}).then(function () {
-				if ($scope.options.hasWorkspaceField) {
+				if ($scope.options.hasWorkspaceField()) {
 					return loadWorkspaces();
-				} else if ($scope.options.hasFormField) {
+				} else if ($scope.options.hasFormField()) {
 					return loadForms(_workspaceId);
 				}
 			});
